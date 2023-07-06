@@ -1,0 +1,37 @@
+
+library(dpylr)
+library(janitor)
+
+con_db <- DBI::dbConnect(odbc::odbc(),
+                         Driver = "MySQL ODBC 8.0 ANSI Driver", 
+                         Server = "sra-prod-analytics-environment.cluster-cirpslbin5by.eu-west-2.rds.amazonaws.com",
+                         user = .rs.askForPassword("Databank username:"),
+                         password = .rs.askForPassword("Databank password:"))
+
+previous_grant_holders  <- 
+  odbc::dbGetQuery(con_db, 
+                   "select person_id
+FROM ukri_ssd_snapshot.2023_04_24_ssd_application as app 
+inner join ukri_ssd_snapshot.2023_04_24_ssd_person_to_application as peop
+on app.award_reference = peop.award_reference
+where derived_status = 'Successful' and primary_ind = '1' AND (decision_date <= '2022-03-31')
+group by person_id") %>% 
+  clean_names()
+
+#Fetching all new grants in the FY and the person ID's associated with these grants to be compared with previous years to see if these persons have recieved an award in previous years
+award_with_person <- odbc::dbGetQuery(con_db,"SELECT grant_reference
+      ,total_authorised
+	  ,person_id
+  FROM analytics.`Additional_ARA_data_2022-23_output_data_funding_decisions` as fd 
+  inner join ukri_ssd_snapshot.2023_04_24_ssd_person_to_application as peop
+  on fd.grant_reference = peop.award_reference
+  where grant_status = 'Successful' and primary_ind = '1'
+  group by grant_reference ,total_authorised ,person_id")
+
+#New column indidating whether grant awardee ID is found in previous grant awardees dataframe
+award_with_person <- award_with_person %>% 
+  mutate(previous_award_holder_ind = ifelse(person_id %in% previous_grant_holders$person_id, 'TRUE', 'FALSE'))
+
+  write.csv(award_with_person, file = "previous_grant_holder.csv",
+            row.names = F,
+            quote = F)
